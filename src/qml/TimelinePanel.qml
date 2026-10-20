@@ -411,6 +411,18 @@ PanelFrame {
     // Drops only the landing outline. dropCreatesNewTrack belongs to the
     // panel-level drop area: a track row leaving the drag must not clear it,
     // since reaching the new-track slop always fires a leave on row 0.
+    // A clip being moved onto a track that does not exist yet: the ghost lane at insertIndex with
+    // the clip's outline in it, as a bin drop onto a new track shows.
+    function showNewTrackLanding(insertIndex, desiredStart, duration, excludeClipId) {
+        const snapped = snapClipStart(desiredStart, duration, excludeClipId)
+        dropCreatesNewTrack = true
+        dropNewTrackIndex = insertIndex
+        dropTrackIndex = -1
+        dropStartSeconds = snapped.start
+        dropDurationSeconds = duration
+        snapGuideSeconds = snapped.guide
+    }
+
     function clearLandingOutline() {
         dropTrackIndex = -1
         snapGuideSeconds = -1
@@ -693,6 +705,28 @@ PanelFrame {
         }
         return -1
     }
+
+    // Where a clip moved within the timeline lands. Rows resolve as dropTargetAtY; pulling it above
+    // the top row or below the bottom one opens a new track there. Unlike a bin drop, the edges
+    // between rows stay with the rows: every move to a neighbouring track passes through one.
+    function moveTargetAtY(y) {
+        if (tracks.length > 0 && y < 0)
+            return { "newTrack": true, "insertIndex": 0 }
+        if (y >= trackOffsetY(tracks.length))
+            return { "newTrack": true, "insertIndex": tracks.length }
+        // The gap between two rows goes to the nearer one, so a clip crossing it does not drop
+        // back to the row it came from for a frame.
+        let target = dropTargetAtY(y)
+        if (target.track < 0)
+            target = dropTargetAtY(y - Theme.trackGap / 2)
+        if (target.track < 0)
+            target = dropTargetAtY(y + Theme.trackGap / 2)
+        target.newTrack = false
+        return target
+    }
+
+    // Kind of the clip being moved, while a move is live; sizes the new-track ghost lane.
+    property string moveDropKind: ""
 
     // Depth of the "insert a new track here" band on a track row.
     function newTrackEdge(index) {

@@ -39,6 +39,10 @@ constexpr double kWaveformWindowMax = 4096.0;
 constexpr double kFilmstripTileWidth = 120.0;
 constexpr int kFilmstripFrameCount = 8;
 constexpr int kMaxCachedTextures = 160;
+// Vertical travel before a moved clip may leave its row: a share of the row's height, with a
+// floor so short audio/subtitle rows still need a deliberate pull.
+constexpr double kVerticalUnlockMinPx = 24.0;
+constexpr double kVerticalUnlockRowFraction = 0.6;
 
 Vertex vertex(double x, double y, const QColor &c, double alphaScale = 1.0)
 {
@@ -793,8 +797,12 @@ void TimelineTrackItem::build()
         appendClip(i, rect, selected, lit, false);
     }
     // The dragged clip draws last, over its neighbours.
-    if (m_drag.moving && m_drag.clipIndex >= 0 && m_drag.clipIndex < rows.size())
-        appendClip(m_drag.clipIndex, m_drag.rect, isSelected(m_drag.clipIndex), true, m_drag.touch);
+    if (m_drag.moving && m_drag.clipIndex >= 0 && m_drag.clipIndex < rows.size()) {
+        QRectF drawn = m_drag.rect;
+        if (!qIsNaN(m_drag.rowTop))
+            drawn.moveTop(m_drag.rowTop);
+        appendClip(m_drag.clipIndex, drawn, isSelected(m_drag.clipIndex), true, m_drag.touch);
+    }
     else if (m_drag.armed && m_drag.clipIndex >= 0 && m_drag.clipIndex < rows.size())
         appendClip(m_drag.clipIndex, effectiveRect(m_drag.clipIndex), true, true, true);
 }
@@ -1470,8 +1478,14 @@ void TimelineTrackItem::applyDrag(const QPointF &scenePos)
 
     const TimelineViewState::Style &s = m_viewState->styleValues();
     const QPointF delta = pos - m_drag.pressItemPos;
+    // A sideways drag rarely stays level, and a few pixels of drift used to hop the clip onto the
+    // next track. Hold it in its row until the pointer has gone most of a row up or down.
+    if (!m_drag.yUnlocked
+        && std::abs(delta.y()) >= std::max(kVerticalUnlockMinPx, height() * kVerticalUnlockRowFraction))
+        m_drag.yUnlocked = true;
+    const double dy = m_drag.yUnlocked ? delta.y() : 0.0;
     m_drag.rect.moveLeft(std::max(m_drag.minX, m_drag.pressRect.left() + delta.x()));
-    m_drag.rect.moveTop(std::clamp(m_drag.pressRect.top() + delta.y(), m_drag.minY, m_drag.maxY));
+    m_drag.rect.moveTop(std::clamp(m_drag.pressRect.top() + dy, m_drag.minY, m_drag.maxY));
 
     const double originX = m_clips->rows().at(m_drag.clipIndex).start * m_viewState->pxPerSecond()
                            + s.ringWidth;
@@ -1484,6 +1498,14 @@ void TimelineTrackItem::refreshDrag()
 {
     if (m_drag.moving)
         applyDrag(m_drag.lastScenePos);
+}
+
+void TimelineTrackItem::setDragRowTop(double top)
+{
+    if (!m_drag.moving || (qIsNaN(top) && qIsNaN(m_drag.rowTop)) || top == m_drag.rowTop)
+        return;
+    m_drag.rowTop = top;
+    scheduleRebuild();
 }
 
 void TimelineTrackItem::mouseMoveEvent(QMouseEvent *event)

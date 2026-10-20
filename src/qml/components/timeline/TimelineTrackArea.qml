@@ -46,25 +46,52 @@ Item {
             area.panel.beginMoveFollow(area.trackIndex, clipIndex)
         }
         onMoveUpdated: (clipIndex, rect, dx, dy) => {
-            area.panel.updateMoveFollow(dx, dy)
             const info = renderer.clipInfo(clipIndex)
             const desired = Math.max(0, (rect.x - Theme.clipSelectionRingWidth) / area.panel.pxPerSecond)
             const pos = renderer.mapToItem(area.timelineColumn, rect.x + rect.width / 2,
                                              rect.y + rect.height / 2)
-            const targetTrack = area.panel.trackIndexAtY(pos.y)
+            const moveTarget = area.opensNewTrack(info) ? area.panel.moveTargetAtY(pos.y) : null
+            if (moveTarget && moveTarget.newTrack) {
+                // Encoded below -1 so a hop between the top and bottom slots still refreshes.
+                const slot = -2 - moveTarget.insertIndex
+                renderer.setDragRowTop(NaN)
+                area.panel.updateMoveFollow(dx, dy)
+                if (Math.abs(desired - area.lastPreviewDesired) * area.panel.pxPerSecond >= 1
+                        || slot !== area.lastPreviewTrack) {
+                    area.lastPreviewDesired = desired
+                    area.lastPreviewTrack = slot
+                    area.panel.moveDropKind = info.kind
+                    area.panel.showNewTrackLanding(moveTarget.insertIndex, desired, info.duration, info.id)
+                }
+                return
+            }
+            const targetTrack = moveTarget ? moveTarget.track : area.panel.trackIndexAtY(pos.y)
             const effTrack = targetTrack >= 0 ? targetTrack : area.trackIndex
+            // Seat the clip in the row it would land in, so it moves a whole track at a time.
+            // Nested lanes keep the free-floating clip; their strips are too thin to seat it in.
+            const inLane = moveTarget && moveTarget.lane >= 0
+            if (inLane || typeof area.panel.trackOffsetY !== "function") {
+                renderer.setDragRowTop(NaN)
+                area.panel.updateMoveFollow(dx, dy)
+            } else {
+                const rowTop = renderer.mapFromItem(area.timelineColumn, 0,
+                                                    area.panel.trackOffsetY(effTrack)).y
+                               + Theme.clipSelectionRingWidth
+                renderer.setDragRowTop(rowTop)
+                area.panel.updateMoveFollow(dx, rowTop - Theme.clipSelectionRingWidth)
+            }
             if (Math.abs(desired - area.lastPreviewDesired) * area.panel.pxPerSecond >= 1
                     || effTrack !== area.lastPreviewTrack) {
                 area.lastPreviewDesired = desired
                 area.lastPreviewTrack = effTrack
+                area.panel.dropCreatesNewTrack = false
                 area.panel.showLandingPreview(effTrack, desired, info.duration, info.id)
             }
         }
         onMoveCanceled: {
             area.panel.clearMoveFollow()
             area.panel.clearLandingPreview()
-            area.lastPreviewDesired = -1
-            area.lastPreviewTrack = -1
+            area.endMovePreview()
         }
         onMoveFinished: (clipIndex, rect) => area.finishMove(clipIndex, rect)
         onContextMenuRequested: (clipIndex) => area.openContextMenu(clipIndex)
@@ -75,13 +102,26 @@ Item {
         }
     }
 
+    // Only plain clips open a track of their own: adjustment and transform clips have lane and
+    // transform-row rules below, and the touch-only Android panel has no new-track ghost.
+    function opensNewTrack(info) {
+        return typeof panel.moveTargetAtY === "function" && info.kind !== "adjustment"
+               && info.adjustmentKind !== "transform"
+    }
+
+    function endMovePreview() {
+        lastPreviewDesired = -1
+        lastPreviewTrack = -1
+        if (panel.moveDropKind !== undefined)
+            panel.moveDropKind = ""
+    }
+
     // Same decision tree the per-clip delegate ran on release, with the indices captured at press.
     function finishMove(originClip, rect) {
         const originTrack = area.trackIndex
         panel.clearMoveFollow()
         panel.clearLandingPreview()
-        lastPreviewDesired = -1
-        lastPreviewTrack = -1
+        endMovePreview()
 
         const info = renderer.clipInfo(originClip)
         // Snapped here, not only in the preview, so the clip lands on the outline it was showing.
@@ -89,7 +129,14 @@ Item {
         const newStart = panel.snapClipStart(rawStart, info.duration, info.id).start
         const pos = renderer.mapToItem(timelineColumn, rect.x + rect.width / 2,
                                          rect.y + rect.height / 2)
-        const target = typeof panel.dropTargetAtY === "function"
+        // The same resolution the drag preview used, so the clip lands where it was showing.
+        const moveTarget = opensNewTrack(info) ? panel.moveTargetAtY(pos.y) : null
+        if (moveTarget && moveTarget.newTrack) {
+            EditorState.moveClipToNewTrack(originTrack, originClip, moveTarget.insertIndex, newStart)
+            return
+        }
+        const target = moveTarget ? moveTarget
+                     : typeof panel.dropTargetAtY === "function"
                      ? panel.dropTargetAtY(pos.y)
                      : { "track": panel.trackIndexAtY(pos.y), "lane": -1 }
         const isAdjustment = info.kind === "adjustment"

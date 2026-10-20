@@ -14,7 +14,10 @@ Item {
     readonly property real laneHeight: {
         // A file-manager drag has no bin row to ask about, so its lane is
         // sized from the kind guessed off the extension instead.
-        const t = panel.pendingDropKind.length > 0
+        // A clip moved out of its row sizes it from its own kind.
+        const t = panel.moveDropKind.length > 0
+                ? EditorState.trackTypeForKind(panel.moveDropKind)
+                : panel.pendingDropKind.length > 0
                 ? EditorState.trackTypeForKind(panel.pendingDropKind)
                 : EditorState.trackTypeForAsset(EditorState.draggingAssetIndex)
         if (t === "video") return Theme.trackHeightVideo

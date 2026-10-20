@@ -113,6 +113,9 @@ public:
                                     double duration, double inPoint, double outPoint);
     // Re-applies the drag at the last pointer position, after the view scrolled under it.
     Q_INVOKABLE void refreshDrag();
+    // Top of the row the panel resolved the dragged clip onto, in this item's coordinates, so the
+    // clip draws seated in that row instead of floating with the pointer. NaN lets it float.
+    Q_INVOKABLE void setDragRowTop(double top);
     // What the panel's drop rules need about a clip: id, start, duration, kind.
     Q_INVOKABLE QVariantMap clipInfo(int index) const;
 
@@ -207,6 +210,10 @@ private:
         double minY = 0.0;
         double maxY = 0.0;
         bool wasSelected = false;
+        // The clip keeps to its own row until the pointer has clearly left it; after that it
+        // follows vertically for the rest of the gesture.
+        bool yUnlocked = false;
+        double rowTop = qQNaN();
     };
 
     struct LivePreview

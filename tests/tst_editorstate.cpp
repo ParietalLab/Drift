@@ -303,6 +303,7 @@ private slots:
     void multiClipMoveLeftPreservesSelectionAndRelativeSpacing();
     void multiClipMoveCrossTracks();
     void multiClipMoveCrossTracksWithLinkedPartners();
+    void moveClipToNewTrackIsOneUndoStep();
     void pasteAttributesToMultipleClips();
     void clipsModelFeedsDelegateRequiredProperties();
     void clipsModelNotifiesOnlyTheClipThatChanged();
@@ -9946,6 +9947,71 @@ void EditorStateTest::multiClipMoveCrossTracksWithLinkedPartners()
     QCOMPARE(state.project()->tracks().at(2).clips.at(1).timelineStart, drift::secondsToUs(7.0));
     QCOMPARE(state.project()->tracks().at(1).clips.at(0).timelineStart, drift::secondsToUs(3.0));
     QCOMPARE(state.project()->tracks().at(1).clips.at(1).timelineStart, drift::secondsToUs(7.0));
+}
+
+// Dragging a clip past the top or bottom row opens a track there. The new track and the move are
+// one edit: a single undo takes away both.
+void EditorStateTest::moveClipToNewTrackIsOneUndoStep()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    // Track 0: Video (default), Track 1: Audio
+    state.addTrack(QStringLiteral("audio"));
+    QCOMPARE(state.project()->tracks().size(), 2);
+
+    drift::Clip v1;
+    v1.id = QStringLiteral("v1");
+    v1.type = drift::ClipType::Video;
+    v1.timelineStart = drift::secondsToUs(2.0);
+    v1.timelineDuration = drift::secondsToUs(2.0);
+    state.project()->tracks()[0].clips.append(v1);
+
+    drift::Clip a1;
+    a1.id = QStringLiteral("a1");
+    a1.type = drift::ClipType::Audio;
+    a1.timelineStart = drift::secondsToUs(1.0);
+    a1.timelineDuration = drift::secondsToUs(2.0);
+    state.project()->tracks()[1].clips.append(a1);
+
+    // Below the bottom row: a video track appended under the audio one.
+    state.selectClip(0, 0);
+    state.moveClipToNewTrack(0, 0, 2, 5.0);
+    QCOMPARE(state.project()->tracks().size(), 3);
+    QCOMPARE(state.project()->tracks().at(2).type, drift::TrackType::Video);
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 0);
+    QCOMPARE(state.project()->tracks().at(2).clips.size(), 1);
+    QCOMPARE(state.project()->tracks().at(2).clips.at(0).id, QStringLiteral("v1"));
+    QCOMPARE(state.project()->tracks().at(2).clips.at(0).timelineStart, drift::secondsToUs(5.0));
+    QCOMPARE(state.selection().size(), 1);
+    QCOMPARE(state.selection().constFirst().toMap().value(QStringLiteral("track")).toInt(), 2);
+
+    state.undo();
+    QCOMPARE(state.project()->tracks().size(), 2);
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 1);
+    QCOMPARE(state.project()->tracks().at(0).clips.at(0).timelineStart, drift::secondsToUs(2.0));
+
+    state.redo();
+    QCOMPARE(state.project()->tracks().size(), 3);
+    QCOMPARE(state.project()->tracks().at(2).clips.size(), 1);
+    state.undo();
+
+    // Above the top row: the new track takes index 0 and every existing row moves down one, so the
+    // source has to be found at its shifted index.
+    state.selectClip(1, 0);
+    state.moveClipToNewTrack(1, 0, 0, 1.0);
+    QCOMPARE(state.project()->tracks().size(), 3);
+    QCOMPARE(state.project()->tracks().at(0).type, drift::TrackType::Audio);
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 1);
+    QCOMPARE(state.project()->tracks().at(0).clips.at(0).id, QStringLiteral("a1"));
+    QCOMPARE(state.project()->tracks().at(1).clips.size(), 1); // v1, pushed down a row
+    QCOMPARE(state.project()->tracks().at(2).clips.size(), 0);
+    QCOMPARE(state.selection().constFirst().toMap().value(QStringLiteral("track")).toInt(), 0);
+
+    state.undo();
+    QCOMPARE(state.project()->tracks().size(), 2);
+    QCOMPARE(state.project()->tracks().at(1).clips.size(), 1);
+    QCOMPARE(state.project()->tracks().at(1).clips.at(0).id, QStringLiteral("a1"));
 }
 
 void EditorStateTest::pasteAttributesToMultipleClips()

@@ -8036,17 +8036,58 @@ void AppController::moveClipToTrack(int trackIndex, int clipIndex, int newTrackI
     if (!isValidClipIndex(trackIndex, clipIndex))
         return;
 
-    const int trackDelta = newTrackIndex - trackIndex;
-    if (trackDelta == 0) {
+    if (newTrackIndex == trackIndex) {
         moveClip(trackIndex, clipIndex, newStart);
         return;
     }
 
+    const drift::Project before = m_project;
+    if (!applyMoveClipToTrack(trackIndex, clipIndex, newTrackIndex, newStart))
+        return;
+    pushProjectEdit(before, tr("Clips moved"));
+    finishEdit(tr("Clips moved"));
+}
+
+void AppController::moveClipToNewTrack(int trackIndex, int clipIndex, int insertIndex, double newStart)
+{
+    if (!isValidClipIndex(trackIndex, clipIndex))
+        return;
+    // Adjustment and transform clips have their own placement rules (lanes, transform rows).
+    const drift::ClipType type = m_project.tracks().at(trackIndex).clips.at(clipIndex).type;
+    if (type == drift::ClipType::Adjustment)
+        return;
+
+    const drift::Project before = m_project;
+    const QList<QPair<int, int>> selectionBefore = m_selection;
+    const int selectedTrackBefore = m_selectedTrack;
+    const int newTrack = drift::insertTrackAboveForClipType(m_project, insertIndex, type);
+
+    // Every row at or below the insertion point moved down one, and the selection names rows by
+    // index.
+    const auto shifted = [newTrack](int t) { return t >= newTrack ? t + 1 : t; };
+    for (QPair<int, int> &pair : m_selection)
+        pair.first = shifted(pair.first);
+    if (m_selectedTrack >= 0)
+        m_selectedTrack = shifted(m_selectedTrack);
+
+    if (!applyMoveClipToTrack(shifted(trackIndex), clipIndex, newTrack, newStart)) {
+        m_project = before;
+        m_selection = selectionBefore;
+        m_selectedTrack = selectedTrackBefore;
+        return;
+    }
+    pushProjectEdit(before, tr("Clip moved to new track"));
+    finishEdit(tr("Clip moved to new track"));
+}
+
+bool AppController::applyMoveClipToTrack(int trackIndex, int clipIndex, int newTrackIndex,
+                                         double newStart)
+{
+    const int trackDelta = newTrackIndex - trackIndex;
     const QPair<int, int> requested(trackIndex, clipIndex);
     QList<QPair<int, int>> targets = m_selection.contains(requested) ? m_selection
                                                                       : QList<QPair<int, int>>{requested};
 
-    const drift::Project before = m_project;
     const drift::TimeUs desiredUs = drift::secondsToUs(newStart);
     const drift::TimeUs baseUs = m_project.tracks().at(trackIndex).clips.at(clipIndex).timelineStart;
     const drift::TimeUs timeDelta = desiredUs - baseUs;
@@ -8054,7 +8095,7 @@ void AppController::moveClipToTrack(int trackIndex, int clipIndex, int newTrackI
     // Verify the leader clip can land on the destination track
     const drift::Clip &leaderClip = m_project.tracks().at(trackIndex).clips.at(clipIndex);
     if (!m_project.tracks().at(newTrackIndex).acceptsClip(leaderClip))
-        return;
+        return false;
     const QString leaderId = leaderClip.id;
 
     drift::TimeUs minGroupStartUs = -1;
@@ -8202,9 +8243,7 @@ void AppController::moveClipToTrack(int trackIndex, int clipIndex, int newTrackI
     }
     m_selectedTransitionTrack = -1;
     m_selectedTransitionLeftClip = -1;
-
-    pushProjectEdit(before, tr("Clips moved"));
-    finishEdit(tr("Clips moved"));
+    return true;
 }
 
 void AppController::addTextClip(const QString &text, double atSeconds, const QString &presetId,

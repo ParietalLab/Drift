@@ -759,6 +759,9 @@ public:
     Q_INVOKABLE void duplicateSelectedClip();
     Q_INVOKABLE void moveClip(int trackIndex, int clipIndex, double newStart);
     Q_INVOKABLE void moveClipToTrack(int trackIndex, int clipIndex, int newTrackIndex, double newStart);
+    // moveClipToTrack onto a fresh track inserted at `insertIndex` (0 is the top), as one undo
+    // step. The track takes the clip's type.
+    Q_INVOKABLE void moveClipToNewTrack(int trackIndex, int clipIndex, int insertIndex, double newStart);
     // Shifts every clip on `trackIndex` starting at/after `gapStartSeconds` left by the
     // width of the gap immediately following that position, closing it. Linked partner
     // clips on other tracks (e.g. a companion audio clip) follow along to stay in sync.
@@ -1825,6 +1828,9 @@ protected:
     // is no longer able to hold them.
     void normalizeAdjustmentLanes(drift::Project &project) const;
     void clampStoredTransitionDurations(drift::Project &project) const;
+    // The project and selection half of moveClipToTrack, without the undo push, so a caller that
+    // also adds the destination track records both as one step. False if nothing moved.
+    bool applyMoveClipToTrack(int trackIndex, int clipIndex, int newTrackIndex, double newStart);
 
     // Selection survives a track-list reshuffle by id rather than index arithmetic: a move now
     // drags a track's lanes with it, so the destination index no longer says where things landed.
